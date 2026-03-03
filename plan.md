@@ -354,8 +354,45 @@ def main():
 ### 2.2 输入（Agent 读取）
 输入文件为`test_plan.json`
 
-### 2.3 输出`summary_report.md`
+### 2.3 输出（Agent 产生）
 
+Agent 执行完成后产生以下输出文件，按功能分为四类：测试方案、测试代码、执行结果、综合报告。
+
+#### 2.3.1 测试方案文件
+
+| 文件 | 路径 | 说明 |
+|------|------|------|
+| `test_plan_program_<file_name>.md` | `reports/<timestamp>_<commit_id>/` | 用户指定程序的测试方案 |
+| `test_plan_case_<file_name>.md` | `reports/<timestamp>_<commit_id>/` | commit diff 文件的测试方案 |
+
+#### 2.3.2 配置文件
+
+| 文件 | 路径 | 说明 |
+|------|------|------|
+| `program_<file_name>_config.json` | `reports/<timestamp>_<commit_id>/detail/program_<file_name>/` | 用户指定程序的配置 |
+| `<file_name>_config.json` | `reports/<timestamp>_<commit_id>/detail/<file_name>/` | commit diff 文件的配置 |
+
+#### 2.3.3 测试代码文件
+
+| 文件 | 路径 | 说明 |
+|------|------|------|
+| `test_<file_name>.py` | `<project_path>/<file_folder>/test/` | 生成的测试代码（新增或更新） |
+
+#### 2.3.4 执行结果文件
+
+| 文件 | 路径 | 说明 |
+|------|------|------|
+| `program_<file_name>_summary.md` | `reports/<timestamp>_<commit_id>/detail/program_<file_name>/` | 测试执行摘要 |
+| `<file_name>_summary.md` | `reports/<timestamp>_<commit_id>/detail/<file_name>/` | 测试执行摘要 |
+| `program_<file_name>_report.md` | `reports/<timestamp>_<commit_id>/detail/program_<file_name>/` | Claude 生成的详细分析报告 |
+| `<file_name>_report.md` | `reports/<timestamp>_<commit_id>/detail/<file_name>/` | Claude 生成的详细分析报告 |
+| `fig/` | `reports/<timestamp>_<commit_id>/detail/<file_name>/fig/` | 覆盖率图表等可视化结果 |
+
+#### 2.3.5 综合报告
+
+| 文件 | 路径 | 说明 |
+|------|------|------|
+| `summary_report.md` | `reports/<timestamp>_<commit_id>/` | 总体测试报告，汇总所有文件的测试结果 |
 
 
 ## 3. 保存与经验复用
