@@ -25,11 +25,9 @@ porygon_t/
 ├── porygon_t.py              # 主编排脚本（Python）
 ├── prompt.md                 # 给 Claude 的指令提示词
 ├── test_plan.json            # 测试计划定义（含配置和任务）
-├── utils/
+├── script/
 │   ├── __init__.py
-│   ├── git_helper.py         # Git 操作封装（含 commit diff 分析）
-│   ├── coverage.py           # 覆盖率分析
-│   └── report.py             # 报告生成
+│   └── *.py                  # 本agent需要的工具
 └── reports/                  # 报告目录（自动生成）
     └── 20260303_143052_a1b2c3d/   # 按时间_commitId 命名
         ├── test_plan_program_<file_name>.md       # test_programs 指定程序的测试方案（自动生成）
@@ -115,7 +113,7 @@ project-src/
 {
   "file_name": "<file_name>",
   "file_path": "/path/to/file_folder/<file_name>",
-  "test_file_path": "/path/to/file_folder/test/test_<name>.py",
+  "test_file_path": "/path/to/file_folder/test/test_<file_name>.py",
   "issues": ["<告诉大模型应该注意的点>"]
 }
 ```
@@ -158,7 +156,67 @@ project-src/
 
 ---
 
-#### 1.2.2 `<file_name>_config`
+#### 1.2.2 `<file_name>_config`（commit diff 文件）
+针对 commit diff 中修改的文件的配置和报告，结构与 1.2.1 类似，但关注变更影响而非完整测试
+
+##### 1.2.2.1 `<file_name>_config.json`
+该文件确定被测文件和测试用例的存储位置
+
+```json
+{
+  "file_name": "<file_name>",
+  "file_path": "/path/to/file_folder/<file_name>",
+  "test_file_path": "/path/to/file_folder/test/test_<file_name>.py",
+  "diff_info": {
+    "commit_id": "a1b2c3d",
+    "change_type": "<modified/added/deleted>",
+    "lines_added": 15,
+    "lines_deleted": 8
+  }
+}
+```
+
+**字段说明**：
+- `file_name`: 被测文件名（从 git diff 获取）
+- `file_path`: 文件绝对路径
+- `test_file_path`: 生成的测试文件路径
+- `diff_info`: Git 差异信息
+  - `commit_id`: 提交哈希
+  - `change_type`: 变更类型（modified/added/deleted）
+  - `lines_added`: 新增行数
+  - `lines_deleted`: 删除行数
+
+---
+
+##### 1.2.2.2 `<file_name>_summary.md`
+该文件和`./fig`记录针对修改文件的测试摘要，由测试执行脚本生成
+
+**生成方式**：
+- 执行 `/path/to/file_folder/test/test_<file_name>.py` 测试程序
+- 测试程序需支持 `--summary=</path/to/<file_name>_summary.md>` 选项输出结构化结果
+- 同时生成变更影响的覆盖率图表（保存至 `fig/` 目录）
+
+**内容结构**：
+- **变更概览**：修改类型、影响范围、关联函数
+- **测试用例统计**：总行数变化对应的测试覆盖、新增/修改用例数
+- **测试覆盖率**：变更代码的行覆盖率、分支覆盖率（目标 ≥ 90%）
+- **回归测试统计**：原有功能验证通过/失败数
+- **关键发现**：变更引入的边界条件、异常风险
+- **测试结论**：变更是否通过测试评估，是否可以安全合并
+
+---
+
+##### 1.2.2.3 `<file_name>_report.md`
+该文件基于 `<file_name>_summary.md` 由 LLM 生成的综合分析报告，包含`./fig`中的结果
+
+**内容结构**：
+- **Diff 分析**：具体修改内容、新增/删除的逻辑、影响面评估
+- **关联影响**：受影响的调用链、依赖关系、潜在副作用
+- **测试用例设计**：基于变更的用例设计思路、边界测试、回归测试
+- **覆盖率报告**：变更代码的行覆盖率、分支覆盖率分析
+- **失败用例分析**：失败原因、堆栈信息、修复建议
+- **回归测试**：验证原有功能未被破坏，兼容性评估
+- **合并建议**：是否建议合并、风险提示、后续注意事项
 
 ---
 
