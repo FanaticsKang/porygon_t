@@ -134,8 +134,8 @@ Claude Skills (原子操作 - 确定性逻辑)
 
 **输入参数**:
 - `--test-file`: 测试文件路径
-- `--output=<out_dir>`: 输出文件夹, 输出文件为`<out_dir>\<file>_summary.md`和`<out_dir>\fig`图片
 - `--coverage-target`: 被测源代码路径（用于计算覆盖率）
+- `--output=<out_dir>`: 输出文件夹, 输出文件为`<out_dir>\<file>_summary.md`和`<out_dir>\fig`图片
 
 **输出**:
 - 执行测试并生成 `<file>_summary.md`

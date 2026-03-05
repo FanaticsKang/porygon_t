@@ -1,0 +1,23 @@
+{
+  "skill_name": "run-tests",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I need to run the test suite for our calculator module. Please execute the tests in test_calculator.py and generate a summary report with coverage analysis. Save the output to ./test_results directory.",
+      "expected_output": "The skill should execute pytest on test_calculator.py, calculate coverage for calculator.py, generate a coverage chart, and create test_calculator_summary.md in ./test_results directory.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "We have a failing test file test_failing.py that needs to be executed. Run the tests and generate a summary report in ./failure_results. I need to see which tests are failing and why.",
+      "expected_output": "The skill should execute pytest on test_failing.py, capture the failures and errors, and create test_failing_summary.md in ./failure_results directory with detailed failure information.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Execute the unit tests for our calculator module with specific coverage targeting. Use --test-file test_calculator.py and --coverage-target calculator.py, and save the results to ./coverage_report. Generate visual charts for the coverage analysis.",
+      "expected_output": "The skill should run tests with explicit coverage target, generate coverage_summary.png chart, and create test_calculator_summary.md in ./coverage_report directory with coverage metrics.",
+      "files": []
+    }
+  ]
+}

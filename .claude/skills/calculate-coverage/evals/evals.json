@@ -1,0 +1,29 @@
+{
+  "skill_name": "calculate-coverage",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Calculate test coverage for calculator.py using test_calculator.py and save the chart to ./fig directory. The test file is at ./test_calculator.py and source file is at ./calculator.py. Output the coverage percentages and ensure the chart is generated.",
+      "expected_output": "Line and branch coverage percentages, coverage chart saved to ./fig/coverage_calculator.png",
+      "files": [
+        "calculator.py",
+        "test_calculator.py"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "I need to analyze test coverage for my Python code. Run coverage analysis on test_calculator.py against calculator.py and generate a visual report. Save any charts to the ./coverage_charts directory.",
+      "expected_output": "Coverage analysis results with percentages, chart saved to ./coverage_charts/coverage_calculator.png",
+      "files": [
+        "calculator.py",
+        "test_calculator.py"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Check test coverage for a non-existent file. Try to calculate coverage for test_nonexistent.py against missing_source.py to see how the skill handles missing files.",
+      "expected_output": "Appropriate error message about missing files, graceful error handling",
+      "files": []
+    }
+  ]
+}
