@@ -24,18 +24,21 @@ Claude Skills (原子操作 - 确定性逻辑)
 **对应流水线阶段**: 阶段3 - 计划阶段
 
 **输入**:
-- `program_<file>_config.json` 或 `<file>_config.json`
+- `program_<file1>_config.json` 或 `<file2>_config.json`
 - 目标源代码文件
 
 **输出**:
-- `test_plan_program_<file>.md` - 用户指定程序的测试方案
-- `test_plan_case_<file>.md` - commit diff文件的测试方案
+- `test_plan_program_<file1>.md` - 用户指定程序的测试方案
+- `test_plan_case_<file2>.md` - commit diff文件的测试方案
 
 **核心任务**:
 - 解析Python文件，提取函数/类定义
 - 分析关键逻辑分支、边界条件、异常处理点
 - 分析git diff变更影响（针对commit diff文件）
 - 设计测试用例覆盖策略（正向/边界/异常/回归）
+
+**说明**：
+- 此·agent·始终使用`ultrathink`模式
 
 ---
 
