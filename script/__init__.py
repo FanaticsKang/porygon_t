@@ -7,7 +7,14 @@ porygon_t 工具脚本包
 __version__ = "0.1.0"
 
 from .claude_client import ClaudeClient, ClaudeError
-from .file_parser import PythonFileParser, ModuleInfo, FunctionInfo, ClassInfo
+from .file_parser import (
+    PythonFileParser,
+    CppFileParser,
+    ModuleInfo,
+    FunctionInfo,
+    ClassInfo,
+    get_file_parser
+)
 from .git_utils import (
     GitError,
     checkout_branch,
@@ -17,7 +24,7 @@ from .git_utils import (
     is_valid_git_repo
 )
 from .report_generator import ReportGenerator, ReportData
-from .test_runner import TestRunner, TestResult, TestCase
+from .test_runner import TestRunner, CppTestRunner, TestResult, TestCase
 
 __all__ = [
     # Claude 客户端
@@ -25,9 +32,11 @@ __all__ = [
     'ClaudeError',
     # 文件解析
     'PythonFileParser',
+    'CppFileParser',
     'ModuleInfo',
     'FunctionInfo',
     'ClassInfo',
+    'get_file_parser',
     # Git 工具
     'GitError',
     'checkout_branch',
@@ -40,6 +49,7 @@ __all__ = [
     'ReportData',
     # 测试执行
     'TestRunner',
+    'CppTestRunner',
     'TestResult',
     'TestCase',
 ]

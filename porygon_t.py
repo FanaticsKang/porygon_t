@@ -46,6 +46,42 @@ logging.basicConfig(
 logger = logging.getLogger('porygon_t')
 
 
+# 支持的文件扩展名
+SUPPORTED_EXTENSIONS = {'.py', '.cpp', '.cc', '.cxx', '.hpp', '.h'}
+PYTHON_EXTENSIONS = {'.py'}
+# C++ 源文件扩展名（头文件不单独测试）
+CPP_SOURCE_EXTENSIONS = {'.cpp', '.cc', '.cxx'}
+CPP_HEADER_EXTENSIONS = {'.hpp', '.h'}
+CPP_EXTENSIONS = CPP_SOURCE_EXTENSIONS | CPP_HEADER_EXTENSIONS
+
+
+def get_file_extension(file_name: str) -> str:
+    """获取文件扩展名"""
+    for ext in sorted(SUPPORTED_EXTENSIONS, key=len, reverse=True):
+        if file_name.endswith(ext):
+            return ext
+    return Path(file_name).suffix
+
+
+def is_python_file(file_name: str) -> bool:
+    """判断是否为 Python 文件"""
+    return any(file_name.endswith(ext) for ext in PYTHON_EXTENSIONS)
+
+
+def is_cpp_file(file_name: str) -> bool:
+    """判断是否为 C++ 源文件（头文件不单独测试）"""
+    return any(file_name.endswith(ext) for ext in CPP_SOURCE_EXTENSIONS)
+
+
+def get_source_language(file_name: str) -> str:
+    """获取源文件语言类型"""
+    if is_python_file(file_name):
+        return 'python'
+    elif is_cpp_file(file_name):
+        return 'cpp'
+    return 'unknown'
+
+
 class TestTarget:
     """测试目标封装类"""
 
@@ -57,15 +93,26 @@ class TestTarget:
         issues: Optional[List[str]] = None,
         diff_info: Optional[Dict] = None
     ):
-        self.file_name = file_name[:-3] if file_name.endswith('.py') else file_name
+        # 移除扩展名，支持多种语言
+        self.file_ext = get_file_extension(file_name)
+        if self.file_ext in SUPPORTED_EXTENSIONS:
+            self.file_name = file_name[:-len(self.file_ext)]
+        else:
+            self.file_name = file_name
         self.file_path = file_path
         self.target_type = target_type
         self.issues = issues or []
         self.diff_info = diff_info or {}
+        self.language = get_source_language(file_name)
 
         file_dir = Path(file_path).parent
         self.test_dir = file_dir / 'test'
-        self.test_file_path = self.test_dir / f'test_{self.file_name}.py'
+
+        # 根据语言确定测试文件扩展名
+        if self.language == 'cpp':
+            self.test_file_path = self.test_dir / f'test_{self.file_name}.cpp'
+        else:
+            self.test_file_path = self.test_dir / f'test_{self.file_name}.py'
 
         self.config_dir: Optional[Path] = None
         self.config_path: Optional[Path] = None
@@ -89,6 +136,7 @@ class TestTarget:
             'file_name': self.file_name,
             'file_path': self.file_path,
             'test_file_path': str(self.test_file_path),
+            'language': self.language,
             self.target_type: self.issues if self.target_type == 'program' else self.diff_info
         }
         return config
@@ -183,25 +231,58 @@ class PorygonT:
             # 获取变更文件列表
             diff_files = get_commit_diff_files(commit_id, project_path)
 
+            # 用于去重：同名 .h/.hpp 和 .cpp 只保留 .cpp
+            processed_names = set()
+
             for file_info in diff_files:
-                # 只处理 Python 文件，跳过删除的文件和 __init__.py
-                if not file_info['file_name'].endswith('.py'):
+                file_name = file_info['file_name']
+                full_path = Path(file_info['full_path'])
+
+                # 只处理支持的文件类型，跳过删除的文件
+                if not any(file_name.endswith(ext) for ext in SUPPORTED_EXTENSIONS):
                     continue
-                if file_info['file_name'].endswith('__init__.py'):
+                # Python 特有：跳过 __init__.py
+                if is_python_file(file_name) and file_name.endswith('__init__.py'):
                     continue
                 if file_info['change_type'] == 'deleted':
                     continue
 
-                # 获取 diff 统计
+                # 获取基础名（不含扩展名）
+                file_ext = get_file_extension(file_name)
+                base_name = file_name[:-len(file_ext)] if file_ext in SUPPORTED_EXTENSIONS else file_name
+
+                # 如果是头文件，检查是否存在同名的源文件
+                if file_ext in CPP_HEADER_EXTENSIONS:
+                    cpp_file = full_path.parent / f"{base_name}.cpp"
+                    if cpp_file.exists():
+                        logger.info(f"头文件 {file_name} 存在对应源文件，跳过独立测试")
+                        continue
+                    # 否则使用头文件作为目标（但需要找对应的源文件）
+                    for ext in CPP_SOURCE_EXTENSIONS:
+                        src_file = full_path.parent / f"{base_name}{ext}"
+                        if src_file.exists():
+                            file_name = f"{base_name}{ext}"
+                            full_path = src_file
+                            break
+                    else:
+                        # 没有找到对应源文件，跳过
+                        continue
+
+                # 去重检查
+                if base_name in processed_names:
+                    continue
+                processed_names.add(base_name)
+
+                # 获取 diff 统计（使用源文件路径）
                 diff_stat = get_diff_stat(
                     commit_id,
-                    file_info['file_path'],
+                    str(full_path.relative_to(project_path)).replace('\\', '/'),
                     project_path
                 )
 
                 target = TestTarget(
-                    file_name=file_info['file_name'],
-                    file_path=file_info['full_path'],
+                    file_name=file_name,
+                    file_path=str(full_path),
                     target_type='diff',
                     diff_info={
                         'commit_id': commit_id,
@@ -237,7 +318,8 @@ class PorygonT:
                 logger.warning(f"程序配置不完整: {prog}")
                 continue
 
-            if file_name.endswith('__init__.py'):
+            # Python 特有：跳过 __init__.py
+            if is_python_file(file_name) and file_name.endswith('__init__.py'):
                 logger.info(f"跳过 __init__.py 文件: {file_name}")
                 continue
 
@@ -287,12 +369,15 @@ class PorygonT:
 
     def _generate_test_code(self, target: TestTarget) -> bool:
         """生成/更新测试代码"""
-        logger.info(f"生成测试代码: {target.file_name}")
+        logger.info(f"生成测试代码: {target.file_name} (语言: {target.language})")
 
         target.test_dir.mkdir(parents=True, exist_ok=True)
-        init_file = target.test_dir / '__init__.py'
-        if not init_file.exists():
-            init_file.touch()
+
+        # Python 特有：创建 __init__.py
+        if target.language == 'python':
+            init_file = target.test_dir / '__init__.py'
+            if not init_file.exists():
+                init_file.touch()
 
         existing_test = target.test_file_path if target.test_file_path.exists() else None
 
@@ -301,7 +386,8 @@ class PorygonT:
                 target_file=Path(target.file_path),
                 test_plan_file=target.plan_path,
                 existing_test_file=existing_test,
-                output_file=target.test_file_path
+                output_file=target.test_file_path,
+                language=target.language
             )
         except ClaudeError as e:
             logger.error(f"生成测试代码失败 [{target.file_name}]: {e}")
@@ -331,13 +417,23 @@ class PorygonT:
             logger.warning(f"测试文件不存在: {target.test_file_path}")
             return False
 
-        logger.info(f"执行测试: {target.file_name}")
+        logger.info(f"执行测试: {target.file_name} (语言: {target.language})")
 
         try:
-            runner = TestRunner(
-                target.test_file_path,
-                Path(self.config['project_path'])
-            )
+            # 根据语言选择测试运行器
+            if target.language == 'cpp':
+                from script.test_runner import CppTestRunner
+                runner = CppTestRunner(
+                    target.test_file_path,
+                    Path(self.config['project_path']),
+                    target_file=Path(target.file_path)
+                )
+            else:
+                runner = TestRunner(
+                    target.test_file_path,
+                    Path(self.config['project_path'])
+                )
+
             result = runner.run(
                 with_coverage=True,
                 coverage_target=Path(target.file_path),

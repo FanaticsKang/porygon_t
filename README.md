@@ -1,6 +1,11 @@
 # porygon_t - AI 自主测试生成器
 
-一个基于 Claude Code 的自动化测试生成 Agent，专为 Python 项目设计。能够智能分析代码变更，自动生成高质量的测试用例，并提供全面的测试报告。
+一个基于 Claude Code 的自动化测试生成 Agent，支持 Python 和 C++ 项目。能够智能分析代码变更，自动生成高质量的测试用例，并提供全面的测试报告。
+
+## 支持语言
+
+- **Python**: 使用 pytest 框架，支持覆盖率收集
+- **C++**: 使用 Google Test 框架，支持 gcov/lcov 覆盖率
 
 ## 核心特性
 

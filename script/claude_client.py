@@ -64,7 +64,12 @@ class ClaudeClient:
             try:
                 content = file_path.read_text(encoding='utf-8')
                 sections.append(f"\n--- 文件: {file_path} ---\n")
-                sections.append(f"```python\n{content}\n```\n")
+                # 根据文件扩展名确定代码块语言
+                ext = file_path.suffix.lower()
+                lang_map = {'.py': 'python', '.cpp': 'cpp', '.cc': 'cpp',
+                           '.cxx': 'cpp', '.hpp': 'cpp', '.h': 'cpp'}
+                lang = lang_map.get(ext, '')
+                sections.append(f"```{lang}\n{content}\n```\n")
             except Exception as e:
                 logger.warning(f"读取文件失败 {file_path}: {e}")
                 continue
@@ -153,6 +158,10 @@ class ClaudeClient:
         except Exception as e:
             raise ClaudeError(f"Claude 调用异常: {e}") from e
 
+    def _get_language_from_config(self, config: Dict) -> str:
+        """从配置中获取语言类型"""
+        return config.get('language', 'python')
+
     def generate_test_plan(
         self,
         target_file: Path,
@@ -172,12 +181,17 @@ class ClaudeClient:
         Returns:
             是否成功
         """
+        # 获取语言类型
+        language = self._get_language_from_config(config)
+        lang_display = "C++" if language == 'cpp' else "Python"
+
         # 构建提示词
         prompt_lines = [
-            "请为以下 Python 文件生成详细的测试方案文档。",
+            f"请为以下 {lang_display} 文件生成详细的测试方案文档。",
             "",
             f"被测文件: {target_file}",
             f"目标类型: {target_type}",
+            f"编程语言: {lang_display}",
             "",
             "请分析文件内容并生成包含以下部分的测试方案:",
             "1. 被测程序/变更分析",
@@ -221,7 +235,8 @@ class ClaudeClient:
         target_file: Path,
         test_plan_file: Path,
         existing_test_file: Optional[Path],
-        output_file: Path
+        output_file: Path,
+        language: str = 'python'
     ) -> bool:
         """
         生成测试代码
@@ -231,34 +246,60 @@ class ClaudeClient:
             test_plan_file: 测试方案文件
             existing_test_file: 已有测试文件（用于增量更新）
             output_file: 输出文件
+            language: 编程语言（'python' 或 'cpp'）
 
         Returns:
             是否成功
         """
-        # 计算相对于项目根目录的模块导入路径
-        try:
-            rel_path = target_file.relative_to(self.project_path)
-            # 去掉 .py 扩展名，将路径分隔符替换为点
-            module_path = str(rel_path.with_suffix('')).replace('\\', '.').replace('/', '.')
-        except ValueError:
-            module_path = target_file.stem
+        is_cpp = language == 'cpp'
+        lang_display = "C++" if is_cpp else "Python"
+        test_framework = "Google Test" if is_cpp else "pytest"
+
+        if is_cpp:
+            # C++ 使用头文件包含方式
+            try:
+                rel_path = target_file.relative_to(self.project_path)
+                include_path = str(rel_path).replace('\\', '/')
+            except ValueError:
+                include_path = target_file.name
+            import_instruction = f'#include "{include_path}"'
+        else:
+            # Python 使用模块导入方式
+            try:
+                rel_path = target_file.relative_to(self.project_path)
+                # 去掉 .py 扩展名，将路径分隔符替换为点
+                module_path = str(rel_path.with_suffix('')).replace('\\', '.').replace('/', '.')
+            except ValueError:
+                module_path = target_file.stem
+            import_instruction = f"from {module_path} import xxx"
 
         prompt_lines = [
-            "请根据测试方案生成 pytest 测试代码。",
+            f"请根据测试方案生成 {lang_display} 测试代码。",
             "",
             f"被测文件: {target_file}",
-            f"模块导入路径: {module_path}",
+            f"编程语言: {lang_display}",
+            f"测试框架: {test_framework}",
             "",
             "要求:",
-            "1. 使用 pytest 框架",
-            "2. 每个测试函数包含清晰的 docstring",
-            "3. 包含必要的 fixtures",
+            f"1. 使用 {test_framework} 框架",
+            "2. 每个测试函数包含清晰的注释说明",
+            "3. 包含必要的测试固件(fixtures/setUp/tearDown)",
             "4. 行覆盖率目标 >= 90%",
             "5. 分支覆盖率目标 >= 85%",
-            f"6. 导入被测模块时使用: from {module_path} import xxx",
+            f"6. 导入被测代码时使用: {import_instruction}",
             "7. 不要使用完整的文件系统路径作为导入前缀",
             "",
         ]
+
+        if is_cpp:
+            prompt_lines.extend([
+                "C++ 测试代码要求:",
+                "- 使用 TEST() 或 TEST_F() 宏定义测试用例",
+                "- 使用 ASSERT_* 和 EXPECT_* 宏进行断言",
+                "- 包含必要的头文件（<gtest/gtest.h> 等）",
+                "- 如果需要，使用命名空间组织代码",
+                "",
+            ])
 
         if existing_test_file and existing_test_file.exists():
             prompt_lines.append("已有测试文件，请在此基础上增量更新:")
@@ -338,16 +379,18 @@ class ClaudeClient:
             return False
 
     def _extract_code_block(self, text: str) -> str:
-        """从 Markdown 响应中提取 Python 代码块"""
+        """从 Markdown 响应中提取代码块（支持 Python 和 C++）"""
         lines = text.split('\n')
         in_code_block = False
         code_lines = []
 
         for line in lines:
-            if line.strip().startswith('```python'):
+            stripped = line.strip()
+            # 支持 Python 和 C++ 代码块
+            if stripped.startswith('```python') or stripped.startswith('```cpp') or stripped.startswith('```c++'):
                 in_code_block = True
                 continue
-            elif line.strip() == '```':
+            elif stripped == '```':
                 in_code_block = False
                 continue
             if in_code_block:

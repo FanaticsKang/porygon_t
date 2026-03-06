@@ -1,12 +1,14 @@
 """
 测试执行器模块
 
-提供运行 pytest、收集测试结果和覆盖率等功能。
+提供运行 pytest、Google Test，收集测试结果等功能。
 """
 
 import json
 import logging
 import os
+import re
+import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
@@ -39,103 +41,52 @@ class TestResult:
     duration: float = 0.0
     cases: List[TestCase] = field(default_factory=list)
     coverage: Dict = field(default_factory=dict)
-    html_report_path: Optional[str] = None
 
     @property
     def success_rate(self) -> float:
-        """成功率"""
         if self.total == 0:
             return 0.0
         return self.passed / self.total * 100
 
 
 class TestRunner:
-    """测试执行器"""
+    """Python 测试执行器（基于 pytest）"""
 
-    def __init__(
-        self,
-        test_file_path: Path,
-        project_path: Optional[Path] = None
-    ):
-        """
-        初始化测试执行器
-
-        Args:
-            test_file_path: 测试文件路径
-            project_path: 项目根路径（用于覆盖率计算）
-        """
+    def __init__(self, test_file_path: Path, project_path: Optional[Path] = None):
         self.test_file_path = Path(test_file_path)
         self.project_path = project_path or self.test_file_path.parent
         self.result = TestResult(test_file=str(test_file_path))
-        # 创建临时文件用于存储结果
         self.junit_file = Path(tempfile.mktemp(suffix='.xml'))
-        self.coverage_file = Path(tempfile.mktemp(suffix='.xml'))
 
-    def run(
-        self,
-        with_coverage: bool = True,
-        coverage_target: Optional[Path] = None,
-        timeout: int = 300
-    ) -> TestResult:
-        """
-        运行测试
-
-        Args:
-            with_coverage: 是否收集覆盖率
-            coverage_target: 覆盖率计算目标文件
-            timeout: 超时时间（秒）
-
-        Returns:
-            测试结果
-        """
+    def run(self, with_coverage: bool = True, coverage_target: Optional[Path] = None,
+            timeout: int = 300) -> TestResult:
+        """运行 pytest 测试"""
+        # with_coverage 和 coverage_target 参数暂时保留以保持兼容性
+        _ = with_coverage, coverage_target
         logger.info(f"运行测试: {self.test_file_path.name}")
 
-        # 辅助函数：转换路径为 posix 格式（跨平台兼容）
         def _posix(path):
             return path.as_posix() if hasattr(path, 'as_posix') else str(path).replace('\\', '/')
 
-        # 构建 pytest 命令
         cmd = [
             'python', '-m', 'pytest',
             _posix(self.test_file_path),
-            '-v',
-            '--tb=short',
+            '-v', '--tb=short',
             f'--junitxml={_posix(self.junit_file)}'
         ]
 
-        # 添加覆盖率
-        # if with_coverage:
-        #     cmd.extend(['--cov', _posix(self.project_path)])
-        #     cmd.append(f'--cov-report=xml:{_posix(self.coverage_file)}')
-        #     cmd.append(f'--cov-report=html:{_posix(self.project_path / "htmlcov")}')
-
         try:
             result = subprocess.run(
-                cmd,
-                cwd=self.project_path,
-                capture_output=True,
-                text=True,
-                timeout=timeout
+                cmd, cwd=self.project_path,
+                capture_output=True, text=True, timeout=timeout
             )
 
-            # 如果测试执行出错（非测试失败），记录 stderr 以便调试
             if result.returncode != 0 and result.stderr:
                 logger.warning(f"pytest stderr: {result.stderr[:500]}")
 
-            # 解析结果
             self._parse_junit_results()
 
-            # 解析覆盖率
-            if with_coverage:
-                self._parse_coverage(coverage_target)
-                self.result.html_report_path = str(self.project_path / 'htmlcov' / 'index.html')
-
-            logger.info(
-                f"测试完成: {self.result.passed}/{self.result.total} 通过 "
-                f"({self.result.success_rate:.1f}%)"
-            )
-            if self.result.html_report_path:
-                logger.info(f"覆盖率报告: {self.result.html_report_path}")
+            logger.info(f"测试完成: {self.result.passed}/{self.result.total} 通过")
 
         except subprocess.TimeoutExpired:
             logger.error(f"测试超时 ({timeout}s)")
@@ -157,23 +108,17 @@ class TestRunner:
             tree = ET.parse(self.junit_file)
             root = tree.getroot()
 
-            # 解析测试套件
             for testsuite in root.findall('testsuite'):
                 self.result.total = int(testsuite.get('tests', 0))
                 self.result.failed = int(testsuite.get('failures', 0))
                 self.result.errors = int(testsuite.get('errors', 0))
                 self.result.skipped = int(testsuite.get('skipped', 0))
                 self.result.duration = float(testsuite.get('time', 0))
-
-                # 计算通过数
                 self.result.passed = (
-                    self.result.total
-                    - self.result.failed
-                    - self.result.errors
-                    - self.result.skipped
+                    self.result.total - self.result.failed
+                    - self.result.errors - self.result.skipped
                 )
 
-                # 解析每个测试用例
                 for testcase in testsuite.findall('testcase'):
                     case = self._parse_test_case(testcase)
                     self.result.cases.append(case)
@@ -189,95 +134,38 @@ class TestRunner:
         message = None
         traceback = None
 
-        # 检查失败
         failure = testcase.find('failure')
         if failure is not None:
             status = 'failed'
             message = failure.get('message', '')
             traceback = failure.text
 
-        # 检查错误
         error = testcase.find('error')
         if error is not None:
             status = 'error'
             message = error.get('message', '')
             traceback = error.text
 
-        # 检查跳过
         skipped = testcase.find('skipped')
         if skipped is not None:
             status = 'skipped'
             message = skipped.get('message', '')
 
         return TestCase(
-            name=name,
-            status=status,
-            duration=duration,
-            message=message,
-            traceback=traceback
+            name=name, status=status, duration=duration,
+            message=message, traceback=traceback
         )
-
-    def _parse_coverage(self, target_file: Optional[Path]):
-        """解析覆盖率报告"""
-        if not self.coverage_file.exists():
-            return
-
-        try:
-            tree = ET.parse(self.coverage_file)
-            root = tree.getroot()
-
-            # 获取总体覆盖率
-            line_rate = float(root.get('line-rate', 0))
-            branch_rate = float(root.get('branch-rate', 0))
-
-            self.result.coverage = {
-                'line_rate': line_rate * 100,
-                'branch_rate': branch_rate * 100,
-                'line_covered': 0,
-                'line_valid': 0,
-                'branch_covered': 0,
-                'branch_valid': 0
-            }
-
-            # 如果有目标文件，获取该文件的覆盖率
-            if target_file:
-                for package in root.findall('.//package'):
-                    for cls in package.findall('classes/class'):
-                        filename = cls.get('filename', '')
-                        if target_file.name in filename:
-                            self.result.coverage['line_rate'] = float(cls.get('line-rate', 0)) * 100
-                            self.result.coverage['branch_rate'] = float(cls.get('branch-rate', 0)) * 100
-                            break
-
-        except Exception:
-            logger.exception("解析覆盖率失败")
 
     def _cleanup(self):
         """清理临时文件"""
-        for f in [self.junit_file, self.coverage_file]:
-            if f.exists():
-                try:
-                    f.unlink()
-                except OSError:
-                    pass
-        # 清理 pytest-cov 生成的 .coverage 文件
-        coverage_data = self.project_path / '.coverage'
-        if coverage_data.exists():
+        if self.junit_file.exists():
             try:
-                coverage_data.unlink()
+                self.junit_file.unlink()
             except OSError:
                 pass
 
     def generate_summary(self, output_path: Path) -> bool:
-        """
-        生成测试摘要文件
-
-        Args:
-            output_path: 输出文件路径
-
-        Returns:
-            是否成功
-        """
+        """生成测试摘要文件"""
         summary = {
             'test_file': self.result.test_file,
             'summary': {
@@ -310,28 +198,264 @@ class TestRunner:
             return False
 
 
-def run_single_test(
-    test_file: Path,
-    target_file: Optional[Path] = None,
-    project_path: Optional[Path] = None,
-    output_summary: Optional[Path] = None
-) -> TestResult:
-    """
-    运行单个测试文件的便捷函数
-
-    Args:
-        test_file: 测试文件路径
-        target_file: 被测目标文件（用于覆盖率）
-        project_path: 项目路径
-        output_summary: 摘要输出路径
-
-    Returns:
-        测试结果
-    """
+def run_single_test(test_file: Path, project_path: Optional[Path] = None,
+                    output_summary: Optional[Path] = None) -> TestResult:
+    """运行单个测试文件的便捷函数"""
     runner = TestRunner(test_file, project_path)
-    result = runner.run(with_coverage=True, coverage_target=target_file)
-
+    result = runner.run()
     if output_summary:
         runner.generate_summary(output_summary)
-
     return result
+
+
+class CppTestRunner:
+    """C++ 测试执行器（基于 Google Test）"""
+
+    def __init__(self, test_file_path: Path, project_path: Optional[Path] = None,
+                 target_file: Optional[Path] = None):
+        self.test_file_path = Path(test_file_path)
+        self.project_path = project_path or self.test_file_path.parent
+        self.target_file = target_file
+        self.result = TestResult(test_file=str(test_file_path))
+        self.test_binary: Optional[Path] = None
+
+    def _find_cmake_or_build_system(self) -> Optional[Path]:
+        """向上查找 CMakeLists.txt"""
+        current = self.project_path
+        for _ in range(5):
+            cmake_file = current / 'CMakeLists.txt'
+            if cmake_file.exists():
+                return current
+            parent = current.parent
+            if parent == current:
+                break
+            current = parent
+        return None
+
+    def _compile_test(self, timeout: int = 300) -> bool:
+        """编译 C++ 测试"""
+        cmake_root = self._find_cmake_or_build_system()
+        if cmake_root:
+            logger.info(f"检测到 CMake 项目: {cmake_root}")
+            return self._compile_with_cmake(cmake_root, timeout)
+        else:
+            logger.info("未检测到 CMake，尝试直接编译")
+            return self._compile_directly(timeout)
+
+    def _find_cmake_executable(self) -> str:
+        """查找 CMake 可执行文件"""
+        cmake_exe = 'cmake.exe' if os.name == 'nt' else 'cmake'
+        cmake_path = shutil.which(cmake_exe)
+        if cmake_path:
+            return cmake_path
+        try:
+            import cmake
+            cmake_dir = Path(cmake.CMAKE_BIN_DIR)
+            cmake_exe_path = cmake_dir / cmake_exe
+            if cmake_exe_path.exists():
+                return str(cmake_exe_path)
+        except ImportError:
+            pass
+        return cmake_exe
+
+    def _detect_mingw(self) -> Optional[Path]:
+        """检测 MinGW 安装路径"""
+        if os.name != 'nt':
+            return None
+        msys2_paths = [
+            Path('C:/msys64/ucrt64/bin'),
+            Path('C:/msys64/mingw64/bin'),
+            Path('C:/mingw64/bin'),
+            Path('C:/mingw/bin'),
+        ]
+        for path in msys2_paths:
+            if path.exists() and (path / 'g++.exe').exists():
+                return path
+        return None
+
+    def _compile_with_cmake(self, cmake_root: Path, timeout: int) -> bool:
+        """使用 CMake 编译"""
+        build_dir = Path(tempfile.mkdtemp(prefix=f'cmake_build_{self.test_file_path.stem}_'))
+        logger.info(f"CMake 构建目录: {build_dir}")
+
+        env = os.environ.copy()
+        mingw_path = self._detect_mingw()
+        if mingw_path:
+            logger.info(f"检测到 MinGW: {mingw_path}")
+            env['PATH'] = str(mingw_path) + os.pathsep + env.get('PATH', '')
+            env['CXX'] = str(mingw_path / 'g++.exe')
+
+        cmake_exe = self._find_cmake_executable()
+        logger.info(f"使用 CMake: {cmake_exe}")
+
+        cmake_cmd = [cmake_exe, str(cmake_root), '-DCMAKE_BUILD_TYPE=Debug']
+        if os.name == 'nt' and mingw_path:
+            cmake_cmd.extend(['-G', 'MinGW Makefiles'])
+
+        try:
+            result = subprocess.run(
+                cmake_cmd, cwd=build_dir, capture_output=True,
+                text=True, timeout=timeout, env=env
+            )
+            if result.returncode != 0:
+                logger.error(f"CMake 配置失败: {result.stderr}")
+                return False
+
+            build_cmd = [cmake_exe, '--build', str(build_dir), '--parallel', '4']
+            result = subprocess.run(
+                build_cmd, capture_output=True,
+                text=True, timeout=timeout, env=env
+            )
+            if result.returncode != 0:
+                logger.error(f"CMake 构建失败: {result.stderr}")
+                return False
+
+            # 查找测试二进制文件
+            test_name = self.test_file_path.stem.replace('test_', '')
+            exe_suffix = '.exe' if os.name == 'nt' else ''
+            for pattern in [f'test_{test_name}{exe_suffix}', f'{test_name}_test{exe_suffix}']:
+                for search_dir in [build_dir, build_dir / 'src', build_dir / 'tests']:
+                    binary = search_dir / pattern
+                    if binary.exists():
+                        self.test_binary = binary
+                        break
+                if self.test_binary:
+                    break
+
+            if self.test_binary:
+                logger.info(f"找到测试二进制文件: {self.test_binary}")
+            else:
+                logger.error("未找到测试二进制文件")
+
+            return self.test_binary is not None
+
+        except Exception as e:
+            logger.error(f"CMake 编译失败: {e}")
+            return False
+
+    def _compile_directly(self, timeout: int) -> bool:
+        """直接编译单个测试文件"""
+        temp_dir = Path(tempfile.mkdtemp(prefix='cpp_test_'))
+        exe_suffix = '.exe' if os.name == 'nt' else ''
+        self.test_binary = temp_dir / f'test_runner{exe_suffix}'
+
+        cmd = [
+            'g++', '-std=c++14', '-O0', '-g',
+            '-I', str(self.project_path),
+            '-I', str(self.project_path / 'src'),
+            str(self.test_file_path)
+        ]
+
+        if self.target_file and self.target_file.suffix in ['.cpp', '.cc', '.cxx']:
+            cmd.append(str(self.target_file))
+
+        cmd.extend(['-lgtest', '-lgtest_main', '-lpthread', '-o', str(self.test_binary)])
+
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=timeout
+            )
+            if result.returncode != 0:
+                logger.error(f"编译失败: {result.stderr}")
+                return False
+            return True
+        except Exception as e:
+            logger.error(f"编译异常: {e}")
+            return False
+
+    def _parse_gtest_output(self, output: str):
+        """解析 Google Test 输出"""
+        test_pattern = re.compile(r'\[\s+(\w+)\s+\]\s+(\w+)\.(\w+)\s+\((\d+)\s*ms\)')
+
+        for line in output.split('\n'):
+            match = test_pattern.search(line)
+            if match:
+                status_str, suite, test_name, duration = match.groups()
+                status_map = {'OK': 'passed', 'FAILED': 'failed', 'SKIPPED': 'skipped'}
+                case = TestCase(
+                    name=f"{suite}.{test_name}",
+                    status=status_map.get(status_str, 'unknown'),
+                    duration=float(duration) / 1000.0
+                )
+                self.result.cases.append(case)
+                self.result.total += 1
+                if case.status == 'passed':
+                    self.result.passed += 1
+                elif case.status == 'failed':
+                    self.result.failed += 1
+                elif case.status == 'skipped':
+                    self.result.skipped += 1
+
+    def run(self, with_coverage: bool = True, coverage_target: Optional[Path] = None,
+            timeout: int = 300) -> TestResult:
+        """运行 C++ 测试"""
+        # with_coverage 和 coverage_target 参数暂时保留以保持兼容性
+        _ = with_coverage, coverage_target
+        logger.info(f"编译 C++ 测试: {self.test_file_path.name}")
+
+        if not self._compile_test(timeout):
+            logger.error("C++ 测试编译失败")
+            self.result.errors += 1
+            return self.result
+
+        logger.info(f"执行 C++ 测试: {self.test_binary}")
+
+        try:
+            env = os.environ.copy()
+            mingw_path = self._detect_mingw()
+            if mingw_path:
+                env['PATH'] = str(mingw_path) + os.pathsep + env.get('PATH', '')
+
+            cmd = [str(self.test_binary), '--gtest_color=no']
+            result = subprocess.run(
+                cmd, capture_output=True, text=True,
+                timeout=timeout, shell=False, env=env
+            )
+
+            self._parse_gtest_output(result.stdout)
+            self._parse_gtest_output(result.stderr)
+
+            logger.info(f"测试完成: {self.result.passed}/{self.result.total} 通过")
+
+        except subprocess.TimeoutExpired:
+            logger.error(f"测试超时 ({timeout}s)")
+            self.result.errors += 1
+        except Exception as e:
+            logger.error(f"运行测试失败: {e}")
+            self.result.errors += 1
+
+        return self.result
+
+    def generate_summary(self, output_path: Path) -> bool:
+        """生成测试摘要文件"""
+        summary = {
+            'test_file': self.result.test_file,
+            'summary': {
+                'total': self.result.total,
+                'passed': self.result.passed,
+                'failed': self.result.failed,
+                'skipped': self.result.skipped,
+                'errors': self.result.errors,
+                'duration': self.result.duration,
+                'success_rate': self.result.success_rate
+            },
+            'coverage': self.result.coverage,
+            'cases': [
+                {
+                    'name': case.name,
+                    'status': case.status,
+                    'duration': case.duration,
+                    'message': case.message
+                }
+                for case in self.result.cases
+            ],
+            'language': 'cpp'
+        }
+
+        try:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding='utf-8')
+            return True
+        except Exception as e:
+            logger.error(f"生成摘要失败: {e}")
+            return False
